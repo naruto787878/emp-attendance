@@ -74,12 +74,20 @@ export function useGeolocation() {
 
   const capture = () => {
     setStatus('loading');
+
     if (!navigator.geolocation) {
       useMock();
       return;
     }
+
+    // Timeout after 5 seconds — fall back to simulated coords
+    const timeout = setTimeout(() => {
+      useMock();
+    }, 5000);
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        clearTimeout(timeout);
         setGeo({
           lat:      pos.coords.latitude,
           lng:      pos.coords.longitude,
@@ -87,7 +95,15 @@ export function useGeolocation() {
         });
         setStatus('success');
       },
-      () => useMock()
+      () => {
+        clearTimeout(timeout);
+        useMock();
+      },
+      {
+        timeout:            5000,   // give up after 5 seconds
+        maximumAge:         60000,  // accept a cached position up to 1 min old
+        enableHighAccuracy: false,  // faster — don't wait for GPS
+      }
     );
   };
 
@@ -101,7 +117,6 @@ export function useGeolocation() {
   };
 
   const reset = () => { setGeo(null); setStatus('idle'); };
-
   return { geo, geoStatus, capture, reset };
 }
 
