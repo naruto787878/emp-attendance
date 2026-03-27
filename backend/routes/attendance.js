@@ -4,29 +4,55 @@ const { getDb, all, run } = require('../database');
 router.post('/punch', async (req, res) => {
   try {
     const db = await getDb();
-    const { employeeId, type, lat, lng, accuracy, note = '' } = req.body;
+    const { employeeId, type, lat, lng, accuracy, note = '', clientTime } = req.body;
+
+    if (!employeeId || !type) {
+      return res.status(400).json({ error: 'employeeId and type are required' });
+    }
 
     const emps = all(db, 'SELECT * FROM employees WHERE id = ?', [employeeId]);
     if (!emps.length) return res.status(404).json({ error: 'Employee not found' });
     const emp = emps[0];
 
+    // Use clientTime sent from browser (accurate local time)
+    // Falls back to server time only if not provided
+    const now      = clientTime ? new Date(clientTime) : new Date();
+    const isoTime  = now.toISOString();
+
+    // Format HH:MM in local time using the offset sent from client
+    const timeStr  = now.toLocaleTimeString('en-IN', {
+      hour:   '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
     const info = run(db,
-      'INSERT INTO attendance_logs (employeeId,name,type,lat,lng,accuracy,note) VALUES (?,?,?,?,?,?,?)',
-      [emp.id, emp.name, type, lat || null, lng || null, accuracy || null, note]
+      `INSERT INTO attendance_logs (employeeId, name, type, lat, lng, accuracy, note, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [emp.id, emp.name, type, lat || null, lng || null, accuracy || null, note, isoTime]
     );
 
-    const now     = new Date();
-    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-
     if (type === 'in') {
-      run(db, "UPDATE employees SET status='present',lat=?,lng=?,lastIn=?,updatedAt=datetime('now') WHERE id=?",
-        [lat || null, lng || null, timeStr, employeeId]);
+      run(db,
+        `UPDATE employees SET status='present', lat=?, lng=?, lastIn=?, updatedAt=? WHERE id=?`,
+        [lat || null, lng || null, timeStr, isoTime, employeeId]
+      );
     } else {
-      run(db, "UPDATE employees SET status='absent',updatedAt=datetime('now') WHERE id=?", [employeeId]);
+      run(db,
+        `UPDATE employees SET status='absent', updatedAt=? WHERE id=?`,
+        [isoTime, employeeId]
+      );
     }
 
-    res.status(201).json({ id: info.lastInsertRowid, employeeId, name: emp.name, type, lat, lng, accuracy, note, createdAt: now.toISOString() });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+    res.status(201).json({
+      id: info.lastInsertRowid,
+      employeeId, name: emp.name, type,
+      lat, lng, accuracy, note,
+      createdAt: isoTime,
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 router.get('/', async (req, res) => {

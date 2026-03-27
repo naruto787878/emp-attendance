@@ -13,22 +13,21 @@ fontLink.rel  = 'stylesheet';
 fontLink.href = 'https://fonts.googleapis.com/css2?family=Syne:wght@500;600&family=DM+Sans:wght@400;500&family=DM+Mono:wght@400;500&display=swap';
 document.head.appendChild(fontLink);
 
-// Global styles
+// Global base styles — uses CSS variables set by App.jsx
 const style = document.createElement('style');
 style.textContent = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body, #root { height: 100%; }
+
   body {
-    background: #070a10;
-    color: #e8eaf0;
     font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
+    transition: background 0.2s, color 0.2s;
   }
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: #0a0d14; }
-  ::-webkit-scrollbar-thumb { background: #1e2230; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #2a2f40; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
   @keyframes slideUp {
     from { transform: translateY(16px); opacity: 0; }
     to   { transform: translateY(0);    opacity: 1; }
@@ -37,7 +36,18 @@ style.textContent = `
     from { opacity: 0; }
     to   { opacity: 1; }
   }
-  input, select, button { font-family: inherit; }
+
+  *, *::before, *::after {
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.15s ease;
+  }
+
+  [style*="animation"] {
+    transition: none !important;
+  }
+
+  input, select, button, textarea {
+    font-family: inherit;
+  }
   button { cursor: pointer; }
 `;
 document.head.appendChild(style);
