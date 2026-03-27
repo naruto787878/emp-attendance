@@ -68,56 +68,158 @@ export function useHoursSummary() {
 }
 
 // ── Geolocation ─────────────────────────────────────────────────
+// Strategy:
+// 1. watchPosition with high accuracy — keeps improving as signals come in
+// 2. Stops automatically when accuracy < 50m or after 15 seconds
+// 3. Falls back to IP geolocation if browser GPS fails
 export function useGeolocation() {
   const [geo, setGeo]          = useState(null);
   const [geoStatus, setStatus] = useState('idle');
+  const [errorMsg, setError]   = useState('');
+  const [method, setMethod]    = useState(''); // 'gps' | 'wifi' | 'network' | 'ip'
+
+  // ── IP geolocation fallback — tries 3 free APIs ───────────────
+  const getIPLocation = async () => {
+    const apis = [
+      {
+        url: 'https://ipapi.co/json/',
+        parse: d => ({ lat: d.latitude, lng: d.longitude, city: d.city }),
+      },
+      {
+        url: 'https://ipwho.is/',
+        parse: d => ({ lat: d.latitude, lng: d.longitude, city: d.city }),
+      },
+      {
+        url: 'https://ip-api.com/json/?fields=lat,lon,city',
+        parse: d => ({ lat: d.lat, lng: d.lon, city: d.city }),
+      },
+    ];
+
+    for (const api of apis) {
+      try {
+        const res  = await fetch(api.url);
+        const data = await res.json();
+        const loc  = api.parse(data);
+        if (loc.lat && loc.lng) return loc;
+      } catch (_) {}
+    }
+    return null;
+  };
 
   const capture = () => {
     setStatus('loading');
+    setError('');
+    setMethod('');
 
+    // ── No geolocation support → straight to IP ──────────────────
     if (!navigator.geolocation) {
-      useMock();
+      getIPLocation().then(result => {
+        if (result) {
+          setGeo({ lat: result.lat, lng: result.lng, accuracy: 5000 });
+          setMethod('ip');
+          setStatus('success');
+        } else {
+          setError('Location not available. Try Chrome or Edge browser.');
+          setStatus('error');
+        }
+      });
       return;
     }
 
-    // Timeout after 5 seconds — fall back to simulated coords
-    const timeout = setTimeout(() => {
-      useMock();
-    }, 5000);
+    let bestAccuracy = Infinity;
+    let resolved     = false;
+    let watchId      = null;
 
-    navigator.geolocation.getCurrentPosition(
+    // ── watchPosition: streams improving location readings ────────
+    // Each reading is more accurate than the last as more signals lock in
+    watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        clearTimeout(timeout);
-        setGeo({
-          lat:      pos.coords.latitude,
-          lng:      pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        });
-        setStatus('success');
+        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+
+        // Only update if this reading is better than what we have
+        if (accuracy < bestAccuracy) {
+          bestAccuracy = accuracy;
+          resolved     = true;
+
+          setGeo({ lat, lng, accuracy });
+          setStatus('success');
+          setError('');
+
+          // Label the source based on accuracy
+          if (accuracy <= 20)  setMethod('gps');     // GPS chip
+          else if (accuracy <= 200) setMethod('wifi');    // WiFi positioning
+          else                 setMethod('network'); // cell/network
+
+          // Good enough — stop watching to save battery
+          if (accuracy <= 50 && watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+          }
+        }
       },
-      () => {
-        clearTimeout(timeout);
-        useMock();
+      async (err) => {
+        // Browser GPS fully failed — use IP location as fallback
+        if (!resolved) {
+          if (watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+          }
+
+          const result = await getIPLocation();
+          if (result) {
+            setGeo({ lat: result.lat, lng: result.lng, accuracy: 5000 });
+            setMethod('ip');
+            setStatus('success');
+            setError('');
+          } else {
+            const messages = {
+              1: 'Permission denied. Click 🔒 in Chrome address bar → Site settings → Location → Allow.',
+              2: 'Location unavailable. Go to Windows Settings → Privacy & Security → Location → turn ON.',
+              3: 'Timed out. Using IP location as fallback — enable Windows Location for better accuracy.',
+            };
+            setError(messages[err.code] || err.message);
+            setStatus('error');
+          }
+        }
       },
       {
-        timeout:            5000,   // give up after 5 seconds
-        maximumAge:         60000,  // accept a cached position up to 1 min old
-        enableHighAccuracy: false,  // faster — don't wait for GPS
+        enableHighAccuracy: true, // use GPS + WiFi + network all at once
+        timeout:            8000, // 8 sec per individual reading attempt
+        maximumAge:         0,    // never use cached — always fresh
       }
     );
+
+    // Hard stop after 15 seconds — take whatever best result we got
+    setTimeout(() => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        // If still no result after 15s, fall back to IP
+        if (!resolved) {
+          getIPLocation().then(result => {
+            if (result) {
+              setGeo({ lat: result.lat, lng: result.lng, accuracy: 5000 });
+              setMethod('ip');
+              setStatus('success');
+              setError('');
+            } else {
+              setError('Location timed out. Enable Windows Location Services for accurate results.');
+              setStatus('error');
+            }
+          });
+        }
+      }
+    }, 15000);
   };
 
-  const useMock = () => {
-    setGeo({
-      lat:      12.9716 + (Math.random() - 0.5) * 0.04,
-      lng:      77.5946 + (Math.random() - 0.5) * 0.04,
-      accuracy: 10 + Math.random() * 20,
-    });
-    setStatus('mock');
+  const reset = () => {
+    setGeo(null);
+    setStatus('idle');
+    setError('');
+    setMethod('');
   };
 
-  const reset = () => { setGeo(null); setStatus('idle'); };
-  return { geo, geoStatus, capture, reset };
+  return { geo, geoStatus, errorMsg, method, capture, reset };
 }
 
 // ── Live Clock ──────────────────────────────────────────────────
